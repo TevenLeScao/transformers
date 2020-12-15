@@ -20,7 +20,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from transformers.models.bert.configuration_bert import BertConfig
-from transformers.models.bert.modeling_flax_bert import FlaxBertPreTrainedModel
+from transformers.models.bert.modeling_flax_bert import FlaxBertPreTrainedModel, FlaxBertOnlyMLMHead
 from transformers.utils import logging
 
 from .modeling_flax_performer_utils import make_fast_softmax_attention
@@ -413,7 +413,8 @@ class FlaxPerformerModel(FlaxBertPreTrainedModel):
         return jax_state
 
     def __init__(
-        self, config: BertConfig, input_shape: Tuple = (1, 1), seed: int = 0, dtype: jnp.dtype = jnp.float32, **kwargs
+            self, config: BertConfig, input_shape: Tuple = (1, 1), seed: int = 0, dtype: jnp.dtype = jnp.float32,
+            **kwargs
     ):
         module = FlaxPerformerModule(
             vocab_size=config.vocab_size,
@@ -424,6 +425,7 @@ class FlaxPerformerModel(FlaxBertPreTrainedModel):
             num_heads=config.num_attention_heads,
             head_size=config.hidden_size,
             intermediate_size=config.intermediate_size,
+            hidden_act=config.hidden_act
         )
 
         super().__init__(config, module, input_shape=input_shape, seed=seed, dtype=dtype)
@@ -449,3 +451,90 @@ class FlaxPerformerModel(FlaxBertPreTrainedModel):
             jnp.array(position_ids, dtype="i4"),
             jnp.array(attention_mask, dtype="i4"),
         )
+
+
+class FlaxPerformerForMaskedLM(FlaxBertPreTrainedModel):
+    def __init__(
+            self, config: BertConfig, input_shape: Tuple = (1, 1), seed: int = 0, dtype: jnp.dtype = jnp.float32,
+            **kwargs
+    ):
+        module = FlaxPerformerForMaskedLMModule(
+            vocab_size=config.vocab_size,
+            type_vocab_size=config.type_vocab_size,
+            hidden_size=config.hidden_size,
+            intermediate_size=config.intermediate_size,
+            head_size=config.hidden_size,
+            num_heads=config.num_attention_heads,
+            num_encoder_layers=config.num_hidden_layers,
+            max_length=config.max_position_embeddings,
+            hidden_act=config.hidden_act,
+            **kwargs,
+        )
+
+        super().__init__(config, module, input_shape=input_shape, seed=seed, dtype=dtype)
+
+    def __call__(
+            self,
+            input_ids,
+            attention_mask=None,
+            token_type_ids=None,
+            position_ids=None,
+            params: dict = None,
+            train: bool = False,
+    ):
+        input_ids, attention_mask, token_type_ids, position_ids = self._check_inputs(
+            input_ids, attention_mask, token_type_ids, position_ids
+        )
+
+        # Handle any PRNG if needed
+        rngs = {}
+
+        return self.module.apply(
+            {"params": params or self.params},
+            jnp.array(input_ids, dtype="i4"),
+            jnp.array(attention_mask, dtype="i4"),
+            jnp.array(token_type_ids, dtype="i4"),
+            jnp.array(position_ids, dtype="i4"),
+            not train,
+            rngs=rngs,
+        )
+
+
+class FlaxPerformerForMaskedLMModule(nn.Module):
+    vocab_size: int
+    hidden_size: int
+    intermediate_size: int
+    head_size: int
+    num_heads: int
+    num_encoder_layers: int
+    type_vocab_size: int
+    max_length: int
+    hidden_act: str
+    dropout_rate: float = 0.0
+    dtype: jnp.dtype = jnp.float32
+
+    @nn.compact
+    def __call__(
+            self, input_ids, attention_mask=None, token_type_ids=None, position_ids=None, deterministic: bool = True
+    ):
+        # Model
+        encoder = FlaxPerformerModule(
+            vocab_size=self.vocab_size,
+            hidden_size=self.hidden_size,
+            type_vocab_size=self.type_vocab_size,
+            max_length=self.max_length,
+            num_encoder_layers=self.num_encoder_layers,
+            num_heads=self.num_heads,
+            head_size=self.hidden_size,
+            intermediate_size=self.intermediate_size,
+            dropout_rate=self.dropout_rate,
+            hidden_act=self.hidden_act,
+        )(input_ids, attention_mask, token_type_ids, position_ids, deterministic=deterministic)
+
+        # Compute the prediction scores
+        encoder = nn.Dropout(rate=self.dropout_rate)(encoder, deterministic=deterministic)
+        logits = FlaxBertOnlyMLMHead(
+            vocab_size=self.vocab_size, hidden_act=self.hidden_act, name="cls", dtype=self.dtype
+        )(encoder)
+
+        return (logits,)

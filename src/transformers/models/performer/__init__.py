@@ -20,4 +20,4 @@ from ...file_utils import is_flax_available
 
 
 if is_flax_available():
-    from .modeling_flax_performer import FlaxPerformerModel
+    from .modeling_flax_performer import FlaxPerformerModel, FlaxPerformerForMaskedLM
