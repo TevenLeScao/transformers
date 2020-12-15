@@ -13,26 +13,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Callable, Dict
-
-import numpy as np
+from typing import Callable, Dict, Tuple
 
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
-
-from transformers.models.bert import BertConfig
-from transformers.file_utils import add_start_docstrings
-from .modeling_flax_performer_utils import make_fast_softmax_attention
-from transformers.modeling_flax_utils import FlaxPreTrainedModel, gelu_new
+import numpy as np
+from transformers.models.bert.configuration_bert import BertConfig
+from transformers.models.bert.modeling_flax_bert import FlaxBertPreTrainedModel
 from transformers.utils import logging
 
+from .modeling_flax_performer_utils import make_fast_softmax_attention
+from ...file_utils import add_start_docstrings
+from ...modeling_flax_utils import ACT2FN
 
 logger = logging.get_logger(__name__)
 
 _CONFIG_FOR_DOC = "BertConfig"
 _TOKENIZER_FOR_DOC = "BertTokenizer"
-
 
 BERT_START_DOCSTRING = r"""
 
@@ -168,7 +166,6 @@ class FlaxPerformerEmbeddings(nn.Module):
 
     @nn.compact
     def __call__(self, input_ids, token_type_ids, position_ids, attention_mask):
-
         # Embed
         w_emb = FlaxPerformerEmbedding(self.vocab_size, self.hidden_size, name="word_embeddings")(
             jnp.atleast_2d(input_ids.astype("i4"))
@@ -207,12 +204,13 @@ class FlaxPerformerAttention(nn.Module):
 
 class FlaxPerformerIntermediate(nn.Module):
     output_size: int
+    hidden_act: str = "gelu"
 
     @nn.compact
     def __call__(self, hidden_state):
         # TODO: Add ACT2FN reference to change activation function
         dense = nn.Dense(features=self.output_size, name="dense")(hidden_state)
-        return gelu_new(dense)
+        return ACT2FN[self.hidden_act](dense)
 
 
 class FlaxPerformerOutput(nn.Module):
@@ -227,13 +225,16 @@ class FlaxPerformerLayer(nn.Module):
     num_heads: int
     head_size: int
     intermediate_size: int
+    hidden_act: str = "gelu"
 
     @nn.compact
     def __call__(self, hidden_state, attention_mask):
         attention = FlaxPerformerAttention(self.num_heads, self.head_size, name="attention")(
             hidden_state, attention_mask
         )
-        intermediate = FlaxPerformerIntermediate(self.intermediate_size, name="intermediate")(attention)
+        intermediate = FlaxPerformerIntermediate(
+            self.intermediate_size, name="intermediate", hidden_act=self.hidden_act
+        )(attention)
         output = FlaxPerformerOutput(name="output")(intermediate, attention)
 
         return output
@@ -248,6 +249,7 @@ class FlaxPerformerLayerCollection(nn.Module):
     num_heads: int
     head_size: int
     intermediate_size: int
+    hidden_act: str = "gelu"
 
     @nn.compact
     def __call__(self, inputs, attention_mask):
@@ -258,7 +260,9 @@ class FlaxPerformerLayerCollection(nn.Module):
 
         # Forward over all encoders
         for i in range(self.num_layers):
-            layer = FlaxPerformerLayer(self.num_heads, self.head_size, self.intermediate_size, name=f"{i}")
+            layer = FlaxPerformerLayer(
+                self.num_heads, self.head_size, self.intermediate_size, hidden_act=self.hidden_act, name=f"{i}"
+            )
             input_i = layer(input_i, attention_mask)
         return input_i
 
@@ -268,11 +272,17 @@ class FlaxPerformerEncoder(nn.Module):
     num_heads: int
     head_size: int
     intermediate_size: int
+    hidden_act: str = "gelu"
 
     @nn.compact
     def __call__(self, hidden_state, attention_mask):
         layer = FlaxPerformerLayerCollection(
-            self.num_layers, self.num_heads, self.head_size, self.intermediate_size, name="layer"
+            self.num_layers,
+            self.num_heads,
+            self.head_size,
+            self.intermediate_size,
+            name="layer",
+            hidden_act=self.hidden_act,
         )(hidden_state, attention_mask)
         return layer
 
@@ -294,10 +304,10 @@ class FlaxPerformerModule(nn.Module):
     num_heads: int
     head_size: int
     intermediate_size: int
+    hidden_act: str = "gelu"
 
     @nn.compact
     def __call__(self, input_ids, token_type_ids, position_ids, attention_mask):
-
         # Embedding
         embeddings = FlaxPerformerEmbeddings(
             self.vocab_size, self.hidden_size, self.type_vocab_size, self.max_length, name="embeddings"
@@ -305,7 +315,12 @@ class FlaxPerformerModule(nn.Module):
 
         # N stacked encoding layers
         encoder = FlaxPerformerEncoder(
-            self.num_encoder_layers, self.num_heads, self.head_size, self.intermediate_size, name="encoder"
+            self.num_encoder_layers,
+            self.num_heads,
+            self.head_size,
+            self.intermediate_size,
+            hidden_act=self.hidden_act,
+            name="encoder",
         )(embeddings, attention_mask)
 
         pooled = FlaxPerformerPooler(name="pooler")(encoder)
@@ -316,7 +331,7 @@ class FlaxPerformerModule(nn.Module):
     "The bare Bert Model transformer outputting raw hidden-states without any specific head on top.",
     BERT_START_DOCSTRING,
 )
-class FlaxPerformerModel(FlaxPreTrainedModel):
+class FlaxPerformerModel(FlaxBertPreTrainedModel):
     """
     The model can behave as an encoder (with only self-attention) as well as a decoder, in which case a layer of
     cross-attention is added between the self-attention layers, following the architecture described in `Attention is
@@ -397,8 +412,10 @@ class FlaxPerformerModel(FlaxPreTrainedModel):
 
         return jax_state
 
-    def __init__(self, config: BertConfig, state: dict, seed: int = 0, **kwargs):
-        model = FlaxPerformerModule(
+    def __init__(
+        self, config: BertConfig, input_shape: Tuple = (1, 1), seed: int = 0, dtype: jnp.dtype = jnp.float32, **kwargs
+    ):
+        module = FlaxPerformerModule(
             vocab_size=config.vocab_size,
             hidden_size=config.hidden_size,
             type_vocab_size=config.type_vocab_size,
@@ -409,7 +426,7 @@ class FlaxPerformerModel(FlaxPreTrainedModel):
             intermediate_size=config.intermediate_size,
         )
 
-        super().__init__(config, model, state, seed)
+        super().__init__(config, module, input_shape=input_shape, seed=seed, dtype=dtype)
 
     @property
     def module(self) -> nn.Module:
@@ -425,7 +442,7 @@ class FlaxPerformerModel(FlaxPreTrainedModel):
         if attention_mask is None:
             attention_mask = jnp.ones_like(input_ids)
 
-        return self.model.apply(
+        return self.module.apply(
             {"params": self.params},
             jnp.array(input_ids, dtype="i4"),
             jnp.array(token_type_ids, dtype="i4"),

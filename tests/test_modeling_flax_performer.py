@@ -1,12 +1,12 @@
 import unittest
 
 from transformers import TensorType, is_flax_available
-from transformers.testing_utils import require_flax
 from transformers.models.bert.tokenization_bert_fast import BertTokenizerFast
+from transformers.testing_utils import require_flax
 
 
 if is_flax_available():
-    from transformers.models.performer.modeling_flax_performer import FlaxPerformerModel
+    from transformers import FlaxPerformerModel
 
 
 @require_flax

@@ -45,7 +45,7 @@ from transformers import (
     AutoConfig,
     AutoTokenizer,
     FlaxBertForMaskedLM,
-    Performer,
+    FlaxPerformerModel,
     HfArgumentParser,
     PreTrainedTokenizerBase,
     TensorType,
