@@ -21,11 +21,11 @@ import flax.linen as nn
 import jax
 import jax.numpy as jnp
 
-from .configuration_bert import BertConfig
-from .file_utils import add_start_docstrings
+from transformers.models.bert import BertConfig
+from transformers.file_utils import add_start_docstrings
 from .modeling_flax_performer_utils import make_fast_softmax_attention
-from .modeling_flax_utils import FlaxPreTrainedModel, gelu
-from .utils import logging
+from transformers.modeling_flax_utils import FlaxPreTrainedModel, gelu_new
+from transformers.utils import logging
 
 
 logger = logging.get_logger(__name__)
@@ -212,7 +212,7 @@ class FlaxPerformerIntermediate(nn.Module):
     def __call__(self, hidden_state):
         # TODO: Add ACT2FN reference to change activation function
         dense = nn.Dense(features=self.output_size, name="dense")(hidden_state)
-        return gelu(dense)
+        return gelu_new(dense)
 
 
 class FlaxPerformerOutput(nn.Module):
