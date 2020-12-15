@@ -92,6 +92,10 @@ class ModelArguments:
         default=None,
         metadata={"help": "If training from scratch, pass a model type from the list: " + ", ".join(MODEL_TYPES)},
     )
+    performer: bool = field(
+        default=False,
+        metadata={"help": "Whether to use FAVOR+ attention"},
+    )
     config_name: Optional[str] = field(
         default=None, metadata={"help": "Pretrained config name or path if not the same as model_name"}
     )
@@ -573,7 +577,8 @@ if __name__ == "__main__":
     rng = jax.random.PRNGKey(training_args.seed)
     dropout_rngs = jax.random.split(rng, jax.local_device_count())
 
-    model = FlaxBertForMaskedLM.from_pretrained(
+    lm_class = FlaxPerformerForMaskedLM if model_args.performer else FlaxBertForMaskedLM
+    model = lm_class.from_pretrained(
         "bert-base-cased",
         dtype=jnp.float32,
         input_shape=(training_args.train_batch_size, config.max_position_embeddings),

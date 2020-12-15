@@ -19,6 +19,7 @@ import flax.linen as nn
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.random import PRNGKey
 from transformers.models.bert.configuration_bert import BertConfig
 from transformers.models.bert.modeling_flax_bert import FlaxBertPreTrainedModel, FlaxBertOnlyMLMHead
 from transformers.utils import logging
@@ -305,6 +306,7 @@ class FlaxPerformerModule(nn.Module):
     head_size: int
     intermediate_size: int
     hidden_act: str = "gelu"
+    add_pooling_layer: bool = True
 
     @nn.compact
     def __call__(self, input_ids, token_type_ids, position_ids, attention_mask):
@@ -322,6 +324,9 @@ class FlaxPerformerModule(nn.Module):
             hidden_act=self.hidden_act,
             name="encoder",
         )(embeddings, attention_mask)
+
+        if not self.add_pooling_layer:
+            return encoder
 
         pooled = FlaxPerformerPooler(name="pooler")(encoder)
         return encoder, pooled
@@ -425,6 +430,7 @@ class FlaxPerformerModel(FlaxBertPreTrainedModel):
             num_heads=config.num_attention_heads,
             head_size=config.hidden_size,
             intermediate_size=config.intermediate_size,
+            dropout_rate=config.hidden_dropout_prob,
             hidden_act=config.hidden_act
         )
 
@@ -434,15 +440,17 @@ class FlaxPerformerModel(FlaxBertPreTrainedModel):
     def module(self) -> nn.Module:
         return self._module
 
-    def __call__(self, input_ids, token_type_ids=None, position_ids=None, attention_mask=None):
-        if token_type_ids is None:
-            token_type_ids = jnp.ones_like(input_ids)
+    def __call__(self, input_ids, token_type_ids=None, position_ids=None,
+                 dropout_rng: PRNGKey = None, attention_mask=None):
 
-        if position_ids is None:
-            position_ids = jnp.arange(jnp.atleast_2d(input_ids).shape[-1])
+        input_ids, attention_mask, token_type_ids, position_ids = self._check_inputs(
+            input_ids, attention_mask, token_type_ids, position_ids
+        )
 
-        if attention_mask is None:
-            attention_mask = jnp.ones_like(input_ids)
+        # Handle any PRNG if needed
+        rngs = {}
+        if dropout_rng is not None:
+            rngs["dropout"] = dropout_rng
 
         return self.module.apply(
             {"params": self.params},
@@ -450,6 +458,7 @@ class FlaxPerformerModel(FlaxBertPreTrainedModel):
             jnp.array(token_type_ids, dtype="i4"),
             jnp.array(position_ids, dtype="i4"),
             jnp.array(attention_mask, dtype="i4"),
+            rng=rngs
         )
 
 
@@ -481,6 +490,7 @@ class FlaxPerformerForMaskedLM(FlaxBertPreTrainedModel):
             position_ids=None,
             params: dict = None,
             train: bool = False,
+            dropout_rng: PRNGKey = None,
     ):
         input_ids, attention_mask, token_type_ids, position_ids = self._check_inputs(
             input_ids, attention_mask, token_type_ids, position_ids
@@ -488,6 +498,8 @@ class FlaxPerformerForMaskedLM(FlaxBertPreTrainedModel):
 
         # Handle any PRNG if needed
         rngs = {}
+        if dropout_rng is not None:
+            rngs["dropout"] = dropout_rng
 
         return self.module.apply(
             {"params": params or self.params},
@@ -527,9 +539,9 @@ class FlaxPerformerForMaskedLMModule(nn.Module):
             num_heads=self.num_heads,
             head_size=self.hidden_size,
             intermediate_size=self.intermediate_size,
-            dropout_rate=self.dropout_rate,
             hidden_act=self.hidden_act,
-        )(input_ids, attention_mask, token_type_ids, position_ids, deterministic=deterministic)
+            add_pooling_layer=False,
+        )(input_ids, attention_mask, token_type_ids, position_ids)
 
         # Compute the prediction scores
         encoder = nn.Dropout(rate=self.dropout_rate)(encoder, deterministic=deterministic)
