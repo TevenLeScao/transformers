@@ -632,6 +632,8 @@ if __name__ == "__main__":
             model_inputs = common_utils.shard(model_inputs.data)
             loss, optimizer, dropout_rngs = p_training_step(optimizer, model_inputs, dropout_rngs)
 
+            print(loss)
+
         epochs.write(f"Loss: {loss}")
 
         # ======================== Evaluating ==============================
