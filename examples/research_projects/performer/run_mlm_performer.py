@@ -612,7 +612,7 @@ if __name__ == "__main__":
     batch_size = int(training_args.train_batch_size)
     eval_batch_size = int(training_args.eval_batch_size)
 
-    wandb.init(project="performer-initial", entity="teamname")
+    wandb.init(project="performer-initial", entity="flukeellington")
 
     epochs = tqdm(range(nb_epochs), desc=f"Epoch ... (1/{nb_epochs})", position=0)
     for epoch in epochs:
