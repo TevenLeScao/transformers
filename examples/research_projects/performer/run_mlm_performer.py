@@ -31,6 +31,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 from datasets import load_dataset
 from tqdm import tqdm
+import wandb
 
 import jax
 import jax.numpy as jnp
@@ -611,6 +612,8 @@ if __name__ == "__main__":
     batch_size = int(training_args.train_batch_size)
     eval_batch_size = int(training_args.eval_batch_size)
 
+    wandb.init(project="performer-initial", entity="teamname")
+
     epochs = tqdm(range(nb_epochs), desc=f"Epoch ... (1/{nb_epochs})", position=0)
     for epoch in epochs:
 
@@ -632,7 +635,7 @@ if __name__ == "__main__":
             model_inputs = common_utils.shard(model_inputs.data)
             loss, optimizer, dropout_rngs = p_training_step(optimizer, model_inputs, dropout_rngs)
 
-            print(loss)
+            wandb.log({"Training loss": np.array(loss).mean()})
 
         epochs.write(f"Loss: {loss}")
 
@@ -660,6 +663,8 @@ if __name__ == "__main__":
         epochs.desc = (
             f"Epoch... ({epoch + 1}/{nb_epochs} | Loss: {eval_summary['loss']}, Acc: {eval_summary['accuracy']})"
         )
+
+        wandb.log({"Eval loss": np.array(eval_summary['loss']).mean()})
 
         # Save metrics
         if has_tensorboard and jax.host_id() == 0:
