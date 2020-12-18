@@ -431,7 +431,7 @@ class FlaxPerformerModel(FlaxBertPreTrainedModel):
             head_size=config.hidden_size,
             intermediate_size=config.intermediate_size,
             dropout_rate=config.hidden_dropout_prob,
-            hidden_act=config.hidden_act
+            hidden_act=config.hidden_act,
         )
 
         super().__init__(config, module, input_shape=input_shape, seed=seed, dtype=dtype)
@@ -541,6 +541,7 @@ class FlaxPerformerForMaskedLMModule(nn.Module):
             intermediate_size=self.intermediate_size,
             hidden_act=self.hidden_act,
             add_pooling_layer=False,
+            name="bert",
         )(input_ids, attention_mask, token_type_ids, position_ids)
 
         # Compute the prediction scores
