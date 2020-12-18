@@ -584,7 +584,7 @@ if __name__ == "__main__":
 
     lm_class = FlaxPerformerForMaskedLM if model_args.performer else FlaxBertForMaskedLM
     if model_args.reinitialize:
-        model = lm_class.from_pretrained(config=BertConfig("bert-base-cased"))
+        model = lm_class(config=BertConfig("bert-base-cased"))
     else:
         model = lm_class.from_pretrained(
             "bert-base-cased",
