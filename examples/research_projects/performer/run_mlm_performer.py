@@ -52,7 +52,7 @@ from transformers import (
     TensorType,
     TrainingArguments,
     is_tensorboard_available,
-    set_seed,
+    set_seed, BertConfig,
 )
 
 # Cache the result
@@ -583,15 +583,16 @@ if __name__ == "__main__":
     dropout_rngs = jax.random.split(rng, jax.local_device_count())
 
     lm_class = FlaxPerformerForMaskedLM if model_args.performer else FlaxBertForMaskedLM
-    model = lm_class.from_pretrained(
-        "bert-base-cased",
-        dtype=jnp.float32,
-        input_shape=(training_args.train_batch_size, config.max_position_embeddings),
-        seed=training_args.seed,
-        dropout_rate=0.1,
-    )
     if model_args.reinitialize:
-        model.init(jax.random.PRNGKey(training_args.seed), (training_args.train_batch_size, model.config.max_length))
+        model = lm_class.from_pretrained(config=BertConfig("bert-base-cased"))
+    else:
+        model = lm_class.from_pretrained(
+            "bert-base-cased",
+            dtype=jnp.float32,
+            input_shape=(training_args.train_batch_size, config.max_position_embeddings),
+            seed=training_args.seed,
+            dropout_rate=0.1,
+        )
 
     # Setup optimizer
     optimizer = Adam(
