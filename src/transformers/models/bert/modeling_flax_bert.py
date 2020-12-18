@@ -525,6 +525,8 @@ class FlaxBertPreTrainedModel(FlaxPreTrainedModel):
 
                 jax_state[new_key] = tensor
 
+        jax_state = {"FlaxPerformerModule_0": jax_state}
+
         return jax_state
 
 
