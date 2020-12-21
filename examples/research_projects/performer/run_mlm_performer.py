@@ -31,7 +31,6 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 from datasets import load_dataset
 from tqdm import tqdm
-import wandb
 
 import jax
 import jax.numpy as jnp
@@ -46,7 +45,6 @@ from transformers import (
     AutoConfig,
     AutoTokenizer,
     FlaxBertForMaskedLM,
-    FlaxPerformerForMaskedLM,
     HfArgumentParser,
     PreTrainedTokenizerBase,
     TensorType,
@@ -54,6 +52,7 @@ from transformers import (
     is_tensorboard_available,
     set_seed, BertConfig,
 )
+from modeling_flax_performer import FlaxPerformerForMaskedLM
 
 # Cache the result
 has_tensorboard = is_tensorboard_available()
@@ -75,6 +74,25 @@ MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
 
 
 @dataclass
+class WandbArguments:
+    """
+    Arguments for logging
+    """
+    wandb_user_name: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "The WandB user name for potential logging. If left None, no logging"
+        },
+    )
+    wandb_project_name: Optional[str] = field(
+        default="performer-experiments",
+        metadata={
+            "help": "The WandB project name for potential logging"
+        },
+    )
+
+
+@dataclass
 class ModelArguments:
     """
     Arguments pertaining to which model/config/tokenizer we are going to fine-tune, or train from scratch.
@@ -87,10 +105,6 @@ class ModelArguments:
                     "Don't set if you want to train a model from scratch."
         },
     )
-    model_type: Optional[str] = field(
-        default=None,
-        metadata={"help": "If training from scratch, pass a model type from the list: " + ", ".join(MODEL_TYPES)},
-    )
     performer: bool = field(
         default=False,
         metadata={"help": "Whether to use FAVOR+ attention"},
@@ -99,18 +113,15 @@ class ModelArguments:
         default=False,
         metadata={"help": "Whether to use a blank model without pretraining"},
     )
-    config_name: Optional[str] = field(
-        default=None, metadata={"help": "Pretrained config name or path if not the same as model_name"}
-    )
     tokenizer_name: Optional[str] = field(
         default=None, metadata={"help": "Pretrained tokenizer name or path if not the same as model_name"}
-    )
-    cache_dir: Optional[str] = field(
-        default=None, metadata={"help": "Where do you want to store the pretrained models downloaded from s3"}
     )
     use_fast_tokenizer: bool = field(
         default=True,
         metadata={"help": "Whether to use one of the fast tokenizer (backed by the tokenizers library) or not."},
+    )
+    cache_dir: Optional[str] = field(
+        default=None, metadata={"help": "Where do you want to store the pretrained models downloaded from s3"}
     )
 
 
@@ -436,13 +447,14 @@ if __name__ == "__main__":
     # or by passing the --help flag to this script.
     # We now keep distinct sets of args, for a cleaner separation of concerns.
 
-    parser = HfArgumentParser((ModelArguments, DataTrainingArguments, TrainingArguments))
+    parser = HfArgumentParser((ModelArguments, DataTrainingArguments, TrainingArguments, WandbArguments))
     if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
         # If we pass only one argument to the script and it's the path to a json file,
         # let's parse it to get our arguments.
-        model_args, data_args, training_args = parser.parse_json_file(json_file=os.path.abspath(sys.argv[1]))
+        model_args, data_args, training_args, wandb_args = parser.parse_json_file(
+            json_file=os.path.abspath(sys.argv[1]))
     else:
-        model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+        model_args, data_args, training_args, wandb_args = parser.parse_args_into_dataclasses()
 
     if (
             os.path.exists(training_args.output_dir)
@@ -516,13 +528,22 @@ if __name__ == "__main__":
     # Distributed training:
     # The .from_pretrained methods guarantee that only one local process can concurrently
     # download model & vocab.
-    if model_args.config_name:
-        config = AutoConfig.from_pretrained(model_args.config_name, cache_dir=model_args.cache_dir)
-    elif model_args.model_name_or_path:
-        config = AutoConfig.from_pretrained(model_args.model_name_or_path, cache_dir=model_args.cache_dir)
+
+    rng = jax.random.PRNGKey(training_args.seed)
+    dropout_rngs = jax.random.split(rng, jax.local_device_count())
+
+    config = BertConfig.from_pretrained(model_args.model_name_or_path, cache_dir=model_args.cache_dir)
+    lm_class = FlaxPerformerForMaskedLM if model_args.performer else FlaxBertForMaskedLM
+    if model_args.reinitialize:
+        model = lm_class(config=BertConfig.from_pretrained(model_args.model_name_or_path))
     else:
-        config = CONFIG_MAPPING[model_args.model_type]()
-        logger.warning("You are instantiating a new config instance from scratch.")
+        model = lm_class.from_pretrained(
+            model_args.model_name_or_path,
+            dtype=jnp.float32,
+            input_shape=(training_args.train_batch_size, config.max_position_embeddings),
+            seed=training_args.seed,
+            dropout_rate=0.1,
+        )
 
     if model_args.tokenizer_name:
         tokenizer = AutoTokenizer.from_pretrained(
@@ -578,22 +599,6 @@ if __name__ == "__main__":
     # This one will take care of randomly masking the tokens.
     data_collator = FlaxDataCollatorForLanguageModeling(tokenizer=tokenizer, mlm_probability=data_args.mlm_probability)
 
-    # Initialize our training
-    rng = jax.random.PRNGKey(training_args.seed)
-    dropout_rngs = jax.random.split(rng, jax.local_device_count())
-
-    lm_class = FlaxPerformerForMaskedLM if model_args.performer else FlaxBertForMaskedLM
-    if model_args.reinitialize:
-        model = lm_class(config=BertConfig())
-    else:
-        model = lm_class.from_pretrained(
-            "bert-base-cased",
-            dtype=jnp.float32,
-            input_shape=(training_args.train_batch_size, config.max_position_embeddings),
-            seed=training_args.seed,
-            dropout_rate=0.1,
-        )
-
     # Setup optimizer
     optimizer = Adam(
         learning_rate=training_args.learning_rate,
@@ -619,7 +624,9 @@ if __name__ == "__main__":
     batch_size = int(training_args.train_batch_size)
     eval_batch_size = int(training_args.eval_batch_size)
 
-    wandb.init(project="performer-initial", entity="flukeellington")
+    if wandb_args.wandb_user_name is not None:
+        import wandb
+        wandb.init(project=wandb_args.wandb_project_name, entity=wandb_args.wandb_user_name)
 
     epochs = tqdm(range(nb_epochs), desc=f"Epoch ... (1/{nb_epochs})", position=0)
     for epoch in epochs:
@@ -642,7 +649,8 @@ if __name__ == "__main__":
             model_inputs = common_utils.shard(model_inputs.data)
             loss, optimizer, dropout_rngs = p_training_step(optimizer, model_inputs, dropout_rngs)
 
-            wandb.log({"Training loss": np.array(loss).mean()})
+            if wandb_args.wandb_user_name is not None:
+                wandb.log({"Training loss": np.array(loss).mean()})
 
         epochs.write(f"Loss: {loss}")
 
@@ -671,7 +679,8 @@ if __name__ == "__main__":
             f"Epoch... ({epoch + 1}/{nb_epochs} | Loss: {eval_summary['loss']}, Acc: {eval_summary['accuracy']})"
         )
 
-        wandb.log({"Eval loss": np.array(eval_summary['loss']).mean()})
+        if wandb_args.wandb_user_name is not None:
+            wandb.log({"Eval loss": np.array(eval_summary['loss']).mean()})
 
         # Save metrics
         if has_tensorboard and jax.host_id() == 0:
