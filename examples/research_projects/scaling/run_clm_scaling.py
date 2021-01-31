@@ -128,10 +128,16 @@ class DataTrainingArguments:
     overwrite_cache: bool = field(
         default=False, metadata={"help": "Overwrite the cached training and evaluation sets"}
     )
+    train_split_percentage: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "The percentage of the total set used as train set. Use if the total set is too large."
+        },
+    )
     validation_split_percentage: Optional[int] = field(
         default=5,
         metadata={
-            "help": "The percentage of the train set used as validation set in case there's no validation split"
+            "help": "The percentage of the total set used as validation set in case there's no validation split"
         },
     )
     preprocessing_num_workers: Optional[int] = field(
@@ -216,6 +222,8 @@ def main():
         # Downloading and loading a dataset from the hub.
         datasets = load_dataset(data_args.dataset_name, data_args.dataset_config_name)
         if "validation" not in datasets.keys():
+            if data_args.train_split_percentage is None:
+                data_args.train_split_percentage = 100 - data_args.validation_split_percentage
             datasets["validation"] = load_dataset(
                 data_args.dataset_name,
                 data_args.dataset_config_name,
@@ -224,7 +232,7 @@ def main():
             datasets["train"] = load_dataset(
                 data_args.dataset_name,
                 data_args.dataset_config_name,
-                split=f"train[{data_args.validation_split_percentage}%:]",
+                split=f"train[{data_args.validation_split_percentage}%:{data_args.train_split_percentage}]",
             )
     else:
         data_files = {}
