@@ -36,7 +36,7 @@ The following example fine-tunes GPT-2 on WikiText-2. We're using the raw WikiTe
 the tokenization). The loss here is that of causal language modeling.
 
 ```bash
-python run_clm.py \
+python run_clm_scaling.py \
     --model_name_or_path gpt2 \
     --dataset_name wikitext \
     --dataset_config_name wikitext-2-raw-v1 \
