@@ -232,8 +232,10 @@ def main():
             datasets["train"] = load_dataset(
                 data_args.dataset_name,
                 data_args.dataset_config_name,
-                split=f"train[{data_args.validation_split_percentage}%:{data_args.train_split_percentage}]",
+                split=f"train[{data_args.validation_split_percentage}%:{data_args.validation_split_percentage + data_args.train_split_percentage}]",
             )
+            print(len(datasets["validation"]))
+            print(len(datasets["train"]))
     else:
         data_files = {}
         if data_args.train_file is not None:
