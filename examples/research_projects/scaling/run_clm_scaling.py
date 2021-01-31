@@ -27,7 +27,7 @@ import sys
 from dataclasses import dataclass, field
 from typing import Optional
 
-from datasets import load_dataset
+from datasets import load_dataset, DatasetDict
 
 import transformers
 from transformers import (
@@ -220,22 +220,21 @@ def main():
     # download the dataset.
     if data_args.dataset_name is not None:
         # Downloading and loading a dataset from the hub.
-        datasets = load_dataset(data_args.dataset_name, data_args.dataset_config_name)
-        if "validation" not in datasets.keys():
-            if data_args.train_split_percentage is None:
-                data_args.train_split_percentage = 100 - data_args.validation_split_percentage
-            datasets["validation"] = load_dataset(
-                data_args.dataset_name,
-                data_args.dataset_config_name,
-                split=f"train[:{data_args.validation_split_percentage}%]",
-            )
-            datasets["train"] = load_dataset(
-                data_args.dataset_name,
-                data_args.dataset_config_name,
-                split=f"train[{data_args.validation_split_percentage}%:{data_args.validation_split_percentage + data_args.train_split_percentage}]",
-            )
-            print(len(datasets["validation"]))
-            print(len(datasets["train"]))
+        datasets = DatasetDict()
+        if data_args.train_split_percentage is None:
+            data_args.train_split_percentage = 100 - data_args.validation_split_percentage
+        datasets["validation"] = load_dataset(
+            data_args.dataset_name,
+            data_args.dataset_config_name,
+            split=f"train[:{data_args.validation_split_percentage}%]",
+        )
+        datasets["train"] = load_dataset(
+            data_args.dataset_name,
+            data_args.dataset_config_name,
+            split=f"train[{data_args.validation_split_percentage}%:{data_args.validation_split_percentage + data_args.train_split_percentage}]",
+        )
+        print(len(datasets["validation"]))
+        print(len(datasets["train"]))
     else:
         data_files = {}
         if data_args.train_file is not None:
