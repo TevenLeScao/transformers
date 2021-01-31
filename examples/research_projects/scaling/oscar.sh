@@ -1,0 +1,1 @@
+TOKENIZERS_PARALLELISM=true deepspeed --num_gpus=8 run_clm_scaling.py --model_type gpt2 --tokenizer_name gpt2 --dataset_name oscar --dataset_config_name unshuffled_deduplicated_en --do_train --do_eval --output_dir /tmp/test-clm --deepspeed ds_config_big.json --n_layer 12 --n_embd 768 --n_head 12 --n_ctx 512 --warmup_steps 100

@@ -1,5 +1,5 @@
  {
-  "steps_per_print": 1,
+  "steps_per_print": 1000,
   "zero_optimization": true,
   "disable_allgather": true,
   "optimizer": {
