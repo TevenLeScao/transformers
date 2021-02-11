@@ -27,7 +27,7 @@ import sys
 from dataclasses import dataclass, field
 from typing import Optional
 
-from datasets import load_dataset, DatasetDict
+from datasets import DatasetDict, load_dataset
 
 import transformers
 from transformers import (
@@ -94,7 +94,9 @@ class ConfigArguments:
     """
 
     n_ctx: Optional[int] = field(default=1024, metadata={"help": "Dimensionality of the causal mask"})
-    n_embd: Optional[int] = field(default=768, metadata={"help": "Dimensionality of the embeddings and hidden states."})
+    n_embd: Optional[int] = field(
+        default=768, metadata={"help": "Dimensionality of the embeddings and hidden states."}
+    )
     n_layer: Optional[int] = field(default=12, metadata={"help": "Number of hidden layers."})
     n_head: Optional[int] = field(default=12, metadata={"help": "Number of attention heads for each attention layer."})
     n_inner: Optional[int] = field(default=None, metadata={"help": "Dimensionality of the inner feed-forward layers."})
@@ -130,14 +132,18 @@ class DataTrainingArguments:
     )
     train_split_percentage: Optional[int] = field(
         default=None,
-        metadata={
-            "help": "The percentage of the total set used as train set. Use if the total set is too large."
-        },
+        metadata={"help": "The percentage of the total set used as train set. Use if the total set is too large."},
     )
     validation_split_percentage: Optional[int] = field(
         default=5,
         metadata={
             "help": "The percentage of the total set used as validation set in case there's no validation split"
+        },
+    )
+    max_validation_points: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "Quick fix to avoid having too big validation sets with huge datasets e.g. OSCAR"
         },
     )
     preprocessing_num_workers: Optional[int] = field(
@@ -167,7 +173,8 @@ def main():
         # If we pass only one argument to the script and it's the path to a json file,
         # let's parse it to get our arguments.
         model_args, data_args, training_args, config_args = parser.parse_json_file(
-            json_file=os.path.abspath(sys.argv[1]))
+            json_file=os.path.abspath(sys.argv[1])
+        )
     else:
         model_args, data_args, training_args, config_args = parser.parse_args_into_dataclasses()
 
@@ -227,14 +234,19 @@ def main():
             data_args.dataset_name,
             data_args.dataset_config_name,
             split=f"train[:{data_args.validation_split_percentage}%]",
+            script_version="master",
+            ignore_verifications=True,
         )
+        if data_args.max_validation_points is not None and data_args.max_validation_points < len(
+                datasets["validation"]):
+            datasets["validation"] = datasets["validation"].select(list(range(data_args.max_validation_points)))
         datasets["train"] = load_dataset(
             data_args.dataset_name,
             data_args.dataset_config_name,
             split=f"train[{data_args.validation_split_percentage}%:{data_args.validation_split_percentage + data_args.train_split_percentage}]",
+            script_version="master",
+            ignore_verifications=True,
         )
-        print(len(datasets["validation"]))
-        print(len(datasets["train"]))
     else:
         data_files = {}
         if data_args.train_file is not None:
@@ -244,7 +256,7 @@ def main():
         extension = data_args.train_file.split(".")[-1]
         if extension == "txt":
             extension = "text"
-        datasets = load_dataset(extension, data_files=data_files)
+        datasets = load_dataset(extension, data_files=data_files, script_version="master", ignore_verifications=True)
     # See more about loading any type of standard or custom dataset (from files, python dict, pandas DataFrame, etc) at
     # https://huggingface.co/docs/datasets/loading_datasets.html.
 
@@ -341,12 +353,17 @@ def main():
     #
     # To speed up this part, we use multiprocessing. See the documentation of the map method for more information:
     # https://huggingface.co/docs/datasets/package_reference/main_classes.html#datasets.Dataset.map
+
     lm_datasets = tokenized_datasets.map(
         group_texts,
         batched=True,
         num_proc=data_args.preprocessing_num_workers,
         load_from_cache_file=not data_args.overwrite_cache,
     )
+
+    n_inner = 4 * config_args.n_embd if config_args.n_inner is None else config_args.n_inner
+    run_name = f"{config_args.n_layer} * {config_args.n_embd} * {n_inner}"
+    training_args.run_name = run_name
 
     # Initialize our Trainer
     trainer = Trainer(
@@ -356,7 +373,7 @@ def main():
         eval_dataset=lm_datasets["validation"] if training_args.do_eval else None,
         tokenizer=tokenizer,
         # Data collator will default to DataCollatorWithPadding, so we change it.
-        data_collator=default_data_collator,
+        data_collator=default_data_collator
     )
 
     # Training
