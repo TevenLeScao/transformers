@@ -15,7 +15,6 @@
 Utilities for working with the local dataset cache. Parts of this file is adapted from the AllenNLP library at
 https://github.com/allenai/allennlp.
 """
-
 import copy
 import fnmatch
 import importlib.util

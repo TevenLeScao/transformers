@@ -1,16 +1,16 @@
 import math
 from itertools import chain
-from typing import Optional, List
+from typing import List, Optional
 
 import torch
 import torch.distributed as dist
 from torch.nn.utils.rnn import pad_sequence
-from torch.utils.data import Dataset, DataLoader
-from transformers import Trainer, DataCollatorForLanguageModeling
+from torch.utils.data import DataLoader, Dataset
+
+from transformers import DataCollatorForLanguageModeling, Trainer
 
 
 class ConsecutiveSampler(torch.utils.data.Sampler):
-
     def __init__(self, data_source, bounds, batch_size, shuffle=True):
         self.data_source = data_source
         self.bounds = bounds + [len(self.data_source)]
@@ -36,7 +36,8 @@ class ConsecutiveSampler(torch.utils.data.Sampler):
         sequence_length = len(sample_order) // self.batch_size
         clamp_len = sequence_length * self.batch_size
         batched_order = list(
-            chain.from_iterable([sample_order[i:clamp_len:sequence_length] for i in range(sequence_length)]))
+            chain.from_iterable([sample_order[i:clamp_len:sequence_length] for i in range(sequence_length)])
+        )
         return iter(batched_order)
 
     def __len__(self):
@@ -44,7 +45,6 @@ class ConsecutiveSampler(torch.utils.data.Sampler):
 
 
 class DistributedConsecutiveSampler(torch.utils.data.Sampler):
-
     def __init__(self, data_source, bounds, batch_size, num_replicas=None, rank=None, shuffle=True):
         if num_replicas is None:
             if not dist.is_available():
@@ -79,20 +79,22 @@ class DistributedConsecutiveSampler(torch.utils.data.Sampler):
             sample_order = list(range(len(self)))
 
         # add extra samples to make it evenly divisible
-        sample_order += sample_order[:(self.total_size - len(sample_order))]
-        assert len(sample_order) == self.total_size, \
-            f"Total indices length {len(sample_order)} and dataset size {self.total_size} mismatched"
+        sample_order += sample_order[: (self.total_size - len(sample_order))]
+        assert (
+            len(sample_order) == self.total_size
+        ), f"Total indices length {len(sample_order)} and dataset size {self.total_size} mismatched"
 
         # subsample
-        indices = sample_order[self.rank * self.num_samples:(self.rank + 1) * self.num_samples]
+        indices = sample_order[self.rank * self.num_samples : (self.rank + 1) * self.num_samples]
 
         # reorder to be consecutive when batched
         sequence_length = len(indices) // self.batch_size
         clamp_len = sequence_length * self.batch_size
         indices = list(chain.from_iterable([indices[i:clamp_len:sequence_length] for i in range(sequence_length)]))
 
-        assert len(indices) == self.num_samples, \
-            f"Indices length {len(indices)} and sample number {self.num_samples} mismatched"
+        assert (
+            len(indices) == self.num_samples
+        ), f"Indices length {len(indices)} and sample number {self.num_samples} mismatched"
         return iter(indices)
 
     def __len__(self):
@@ -103,7 +105,6 @@ class DistributedConsecutiveSampler(torch.utils.data.Sampler):
 
 
 class LongRangeTrainer(Trainer):
-
     def get_train_dataloader(self) -> DataLoader:
         """
         Returns the training :class:`~torch.utils.data.DataLoader`.
@@ -124,8 +125,9 @@ class LongRangeTrainer(Trainer):
             train_sampler = (
                 ConsecutiveSampler(self.train_dataset, text_starts, self.args.train_batch_size, shuffle=True)
                 if self.args.local_rank == -1
-                else DistributedConsecutiveSampler(self.train_dataset, text_starts,
-                                                   self.args.per_device_train_batch_size)
+                else DistributedConsecutiveSampler(
+                    self.train_dataset, text_starts, self.args.per_device_train_batch_size
+                )
             )
 
         return DataLoader(
@@ -148,8 +150,7 @@ class LongRangeTrainer(Trainer):
             eval_sampler = (
                 ConsecutiveSampler(eval_dataset, [0], self.args.train_batch_size, shuffle=False)
                 if self.args.local_rank == -1
-                else DistributedConsecutiveSampler(eval_dataset, [0],
-                                                   self.args.per_device_eval_batch_size)
+                else DistributedConsecutiveSampler(eval_dataset, [0], self.args.per_device_eval_batch_size)
             )
 
         return DataLoader(
@@ -168,8 +169,7 @@ class LongRangeTrainer(Trainer):
             test_sampler = (
                 ConsecutiveSampler(test_dataset, [0], self.args.train_batch_size)
                 if self.args.local_rank == -1
-                else DistributedConsecutiveSampler(test_dataset, [0],
-                                                   self.args.per_device_eval_batch_size)
+                else DistributedConsecutiveSampler(test_dataset, [0], self.args.per_device_eval_batch_size)
             )
 
         # We use the same batch_size as for eval.
@@ -183,7 +183,6 @@ class LongRangeTrainer(Trainer):
 
 
 class VerboseDataCollator(DataCollatorForLanguageModeling):
-
     def _tensorize_batch(self, examples: List[torch.Tensor]) -> torch.Tensor:
         length_of_first = examples[0].size(0)
         are_tensors_same_length = all(x.size(0) == length_of_first for x in examples)
